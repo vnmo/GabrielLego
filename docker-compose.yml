@@ -1,0 +1,13 @@
+version: '3'
+services:
+    gabriel-lego-client:
+        build:
+            context: .
+            dockerfile: ./Dockerfile
+        image: molguin/gabriel-lego-client:latest
+        volumes:
+            - /tmp/.X11-unix:/tmp/.X11-unix:rw
+        environment:
+            - DISPLAY 
+            - QT_X11_NO_MITSHM=1
+

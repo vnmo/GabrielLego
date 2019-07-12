@@ -2,6 +2,7 @@ version: '3'
 services:
     gabriel-lego:
         image: molguin/gabriel-lego:latest
+        container_name: gabriel-lego
         ports:
             - 0.0.0.0:9098:9098
             - 0.0.0.0:9111:9111
@@ -12,9 +13,17 @@ services:
             context: .
             dockerfile: ./Dockerfile
         image: molguin/gabriel-lego-client:latest
+        container_name: gabriel-lego-client
         volumes:
             - /tmp/.X11-unix:/tmp/.X11-unix:rw
         environment:
             - DISPLAY 
             - QT_X11_NO_MITSHM=1
+        links:
+            - gabriel-lego
+        privileged: true
+        entrypoint:
+            - gabriel_client
+            - --ip
+            - gabriel-lego
 

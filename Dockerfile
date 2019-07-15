@@ -1,4 +1,4 @@
-FROM ubuntu:16.04
+FROM molguin/gabriel-lego:latest
 MAINTAINER Manuel Olguín, molguin@kth.se
 
 RUN apt-get update

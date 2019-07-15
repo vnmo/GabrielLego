@@ -37,11 +37,13 @@ class GabrielSocketCommand(ClientCommand):
 
 
 class VideoStreamingThread(SocketClientThread):
-    def __init__(self, input_source, cmd_q=None, reply_q=None):
+    def __init__(self, input_source, sig_feed_available=None,
+                 cmd_q=None, reply_q=None):
         super(VideoStreamingThread, self).__init__(cmd_q, reply_q)
         self.handlers[GabrielSocketCommand.STREAM] = self._handle_STREAM
         self.is_streaming = False
         self._input_source = input_source
+        self.sig_feed = sig_feed_available
 
     def run(self):
         while self.alive.isSet():
@@ -72,6 +74,11 @@ class VideoStreamingThread(SocketClientThread):
                 ClientCommand.SEND, jpeg_frame.tostring()))
             logger.debug('Send Frame {}'.format(id))
             id += 1
+
+            if self.sig_feed:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.sig_feed.emit(rgb_frame)
+
         video_capture.release()
 
 
@@ -130,11 +137,13 @@ class TokenManager(object):
 
     def _inc(self):
         self.token_val = (self.token_val + 1) if (self.token_val <
-                                                  self.token_num) else (self.token_val)
+                                                  self.token_num) else (
+            self.token_val)
 
     def _dec(self):
         self.token_val = (
-            self.token_val - 1) if (self.token_val >= 0) else (self.token_val)
+                self.token_val - 1) if (self.token_val >= 0) else (
+            self.token_val)
 
     def empty(self):
         return (self.token_val < 0)
@@ -166,9 +175,11 @@ def parse(data):
         return data
 
 
-def create_streaming_thread(video_input):
+def create_streaming_thread(video_input, sig_feed_available):
     stream_cmd_q = Queue.Queue()
-    video_streaming_thread = VideoStreamingThread(video_input, cmd_q=stream_cmd_q)
+    video_streaming_thread = VideoStreamingThread(video_input,
+                                                  sig_feed_available=sig_feed_available,
+                                                  cmd_q=stream_cmd_q)
     video_streaming_thread.daemon = True
     return video_streaming_thread, stream_cmd_q
 
@@ -182,21 +193,28 @@ def create_receiving_thread(legacy):
     return result_receiving_thread, result_cmd_q, result_reply_q
 
 
-def run(sig_frame_available=None,
+def run(sig_feed_available=None,
+        sig_instruction_available=None,
         video_input=0,
         ip=Config.GABRIEL_IP,
         video_port=Config.VIDEO_STREAM_PORT,
         result_port=Config.RESULT_RECEIVING_PORT,
-        legacy = Config.LEGACY):
-    logger.debug("Connecting to Server ({}) Port ({}, {})".format(ip, video_port, result_port))
+        legacy=Config.LEGACY,
+        ui=False):
+    logger.debug(
+        "Connecting to Server ({}) Port ({}, {})".format(ip, video_port,
+                                                         result_port))
     tokenm = TokenManager(Config.TOKEN)
-    video_streaming_thread, stream_cmd_q = create_streaming_thread(video_input)
+    video_streaming_thread, stream_cmd_q = create_streaming_thread(video_input,
+                                                                   sig_feed_available)
     # connect and stream to server
     stream_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
                                    (ip, video_port)))
     stream_cmd_q.put(ClientCommand(GabrielSocketCommand.STREAM, tokenm))
     # connect and listen to server
-    result_receiving_thread, result_cmd_q, result_reply_q = create_receiving_thread(legacy=legacy)
+    result_receiving_thread, result_cmd_q, result_reply_q = \
+        create_receiving_thread(
+        legacy=legacy)
     result_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
                                    (ip, result_port)))
     result_cmd_q.put(ClientCommand(GabrielSocketCommand.LISTEN, tokenm))
@@ -213,23 +231,23 @@ def run(sig_frame_available=None,
     try:
         while True:
             resp = result_reply_q.get()
-            # connect and send also send reply to reply queue without any data attached
+            # connect and send also send reply to reply queue without any
+            # data attached
             if resp.type == ClientReply.SUCCESS and resp.data is not None:
                 (resp_header, resp_data) = resp.data
                 resp_header = json.loads(resp_header)
                 logger.debug('header: {}'.format(resp_header))
-                if sig_frame_available == None:
+                if not ui:
                     # this is a command line program
                     result = parse(resp_data).get('speech')
                     if result and len(result) > 0:
                         logger.info('instruction: {}'.format(result))
                 else:
-                    # display received image on the pyqt ui
-
-                    print (resp_data)
-                    exit()
-
-                    show_on_ui(sig_frame_available, resp_data)
+                    # TODO: display received image on the pyqt ui
+                    # show_on_ui(sig_instruction_available, resp_data)
+                    result = parse(resp_data).get('speech')
+                    if result and len(result) > 0:
+                        logger.info('instruction: {}'.format(result))
             elif resp.type == ClientReply.ERROR:
                 logger.error("Error: {}".format(resp.data))
                 join_threads()

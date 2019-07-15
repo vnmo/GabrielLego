@@ -16,20 +16,29 @@ import client
 import design  # This file holds our MainWindow and all design related things
 import fire
 
+
 class UI(QtGui.QMainWindow, design.Ui_MainWindow):
     def __init__(self):
         super(self.__class__, self).__init__()
         self.setupUi(self)  # This is defined in design.py file automatically
 
-    def set_image(self, frame):
+    @staticmethod
+    def set_label_image(frame, label):
         img = QImage(
             frame, frame.shape[1], frame.shape[0], QtGui.QImage.Format_RGB888)
         pix = QPixmap.fromImage(img)
-        self.label_image.setPixmap(pix)
+        label.setPixmap(pix)
+
+    def set_feed_image(self, frame):
+        UI.set_label_image(frame, self.feed_label)
+
+    def set_guidance_image(self, frame):
+        UI.set_label_image(frame, self.guidance_label)
 
 
 class ClientThread(QThread):
-    sig_frame_available = pyqtSignal(object)
+    sig_feed_available = pyqtSignal(object)
+    sig_instruction_available = pyqtSignal(object)
 
     def __init__(self, ip):
         super(self.__class__, self).__init__()
@@ -37,7 +46,10 @@ class ClientThread(QThread):
         self.ip = ip
 
     def run(self):
-        client.run(sig_frame_available=self.sig_frame_available, ip=self.ip)
+        client.run(sig_feed_available=self.sig_feed_available,
+                   sig_instruction_available=self.sig_instruction_available,
+                   ui=True,
+                   ip=self.ip)
 
     def stop(self):
         client.alive = False
@@ -49,12 +61,14 @@ def main(ip, *args, **kwargs):
     ui = UI()
     ui.show()
     clientThread = ClientThread(ip)
-    clientThread.sig_frame_available.connect(ui.set_image)
+    clientThread.sig_feed_available.connect(ui.set_feed_image)
+    clientThread.sig_instruction_available.connect(ui.set_guidance_image)
     clientThread.finished.connect(app.exit)
     clientThread.start()
 
     sys.exit(app.exec_())  # and execute the app
 
 
-if __name__ == '__main__':  # if we're running file directly and not importing it
+if __name__ == '__main__':  # if we're running file directly and not
+    # importing it
     fire.Fire(main)

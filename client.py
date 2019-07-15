@@ -195,6 +195,7 @@ def create_receiving_thread(legacy):
 
 def run(sig_feed_available=None,
         sig_instruction_available=None,
+        sig_guidance_available=None,
         video_input=0,
         ip=Config.GABRIEL_IP,
         video_port=Config.VIDEO_STREAM_PORT,
@@ -248,6 +249,8 @@ def run(sig_feed_available=None,
                     result = parse(resp_data).get('speech')
                     if result and len(result) > 0:
                         logger.info('instruction: {}'.format(result))
+                        if sig_instruction_available:
+                            sig_instruction_available.emit(result)
             elif resp.type == ClientReply.ERROR:
                 logger.error("Error: {}".format(resp.data))
                 join_threads()

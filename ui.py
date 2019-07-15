@@ -9,7 +9,7 @@ import threading
 
 import numpy as np
 from PyQt4 import QtCore, QtGui
-from PyQt4.QtCore import SIGNAL, QThread, pyqtSignal
+from PyQt4.QtCore import SIGNAL, QThread, pyqtSignal, QString
 from PyQt4.QtGui import QImage, QMessageBox, QPixmap, QVBoxLayout
 
 import client
@@ -35,10 +35,14 @@ class UI(QtGui.QMainWindow, design.Ui_MainWindow):
     def set_guidance_image(self, frame):
         UI.set_label_image(frame, self.guidance_label)
 
+    def set_guidance_text(self, instruction):
+        self.instruction_label.setText(QString(instruction))
+
 
 class ClientThread(QThread):
     sig_feed_available = pyqtSignal(object)
-    sig_instruction_available = pyqtSignal(object)
+    sig_instruction_available = pyqtSignal(str)
+    sig_guidance_available = pyqtSignal(object)
 
     def __init__(self, ip):
         super(self.__class__, self).__init__()
@@ -48,6 +52,7 @@ class ClientThread(QThread):
     def run(self):
         client.run(sig_feed_available=self.sig_feed_available,
                    sig_instruction_available=self.sig_instruction_available,
+                   sig_guidance_available=self.sig_guidance_available,
                    ui=True,
                    ip=self.ip)
 
@@ -62,7 +67,7 @@ def main(ip, *args, **kwargs):
     ui.show()
     clientThread = ClientThread(ip)
     clientThread.sig_feed_available.connect(ui.set_feed_image)
-    clientThread.sig_instruction_available.connect(ui.set_guidance_image)
+    clientThread.sig_instruction_available.connect(ui.set_guidance_text)
     clientThread.finished.connect(app.exit)
     clientThread.start()
 

@@ -220,8 +220,8 @@ def run(sig_frame_available=None,
                 logger.debug('header: {}'.format(resp_header))
                 if sig_frame_available == None:
                     # this is a command line program
-                    result = parse(resp_data)
-                    if len(result) > 0:
+                    result = parse(resp_data).get('speech')
+                    if result and len(result) > 0:
                         logger.info('instruction: {}'.format(result))
                 else:
                     # display received image on the pyqt ui

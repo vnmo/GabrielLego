@@ -1,29 +1,24 @@
 #! /usr/bin/env python
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function
 
-import logzero
-import logging
-from logzero import logger
-import socket
-import struct
-import threading
 import Queue
-import StringIO
 import cv2
 import json
-from time import sleep
-import pdb
-import sys
+import logging
 import select
-import numpy as np
-from config import Config
-import base64
-import protocol
-from socketLib import ClientCommand, ClientReply, SocketClientThread
+import struct
+import threading
+from time import sleep
+
 import fire
+import logzero
+import numpy as np
+from logzero import logger
+
+import protocol
+from config import Config
+from socketLib import ClientCommand, ClientReply, SocketClientThread
 
 
 class GabrielSocketCommand(ClientCommand):
@@ -215,7 +210,7 @@ def run(sig_feed_available=None,
     # connect and listen to server
     result_receiving_thread, result_cmd_q, result_reply_q = \
         create_receiving_thread(
-        legacy=legacy)
+            legacy=legacy)
     result_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
                                    (ip, result_port)))
     result_cmd_q.put(ClientCommand(GabrielSocketCommand.LISTEN, tokenm))

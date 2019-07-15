@@ -1,20 +1,18 @@
 #!/usr/bin/env python
 from __future__ import absolute_import, division, print_function
 
-import os  # For listing directory methods
-import pdb
-import re
+import logging
 import sys  # We need sys so that we can pass argv to QApplication
 import threading
 
-import numpy as np
-from PyQt4 import QtCore, QtGui
-from PyQt4.QtCore import SIGNAL, QThread, pyqtSignal, QString
-from PyQt4.QtGui import QImage, QMessageBox, QPixmap, QVBoxLayout
+import fire
+import logzero
+from PyQt4 import QtGui
+from PyQt4.QtCore import QString, QThread, pyqtSignal
+from PyQt4.QtGui import QImage, QPixmap
 
 import client
 import design  # This file holds our MainWindow and all design related things
-import fire
 
 
 class UI(QtGui.QMainWindow, design.Ui_MainWindow):
@@ -53,7 +51,6 @@ class ClientThread(QThread):
         client.run(sig_feed_available=self.sig_feed_available,
                    sig_instruction_available=self.sig_instruction_available,
                    sig_guidance_available=self.sig_guidance_available,
-                   ui=True,
                    ip=self.ip)
 
     def stop(self):
@@ -67,6 +64,7 @@ def main(ip, *args, **kwargs):
     ui.show()
     clientThread = ClientThread(ip)
     clientThread.sig_feed_available.connect(ui.set_feed_image)
+    clientThread.sig_guidance_available.connect(ui.set_guidance_image)
     clientThread.sig_instruction_available.connect(ui.set_guidance_text)
     clientThread.finished.connect(app.exit)
     clientThread.start()
@@ -76,4 +74,5 @@ def main(ip, *args, **kwargs):
 
 if __name__ == '__main__':  # if we're running file directly and not
     # importing it
+    logzero.loglevel(logging.INFO)
     fire.Fire(main)

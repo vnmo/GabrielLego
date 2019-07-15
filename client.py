@@ -9,6 +9,7 @@ import logging
 import select
 import struct
 import threading
+from base64 import b64decode
 from time import sleep
 
 import fire
@@ -156,13 +157,6 @@ class TokenManager(object):
                 self.has_token_cv.notifyAll()
 
 
-def show_on_ui(sig_frame_available, data):
-    np_data = np.fromstring(data, dtype=np.uint8)
-    frame = cv2.imdecode(np_data, cv2.CV_LOAD_IMAGE_COLOR)
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    sig_frame_available.emit(rgb_frame)
-
-
 def parse(data):
     if Config.LEGACY:
         return json.loads(data)
@@ -195,8 +189,7 @@ def run(sig_feed_available=None,
         ip=Config.GABRIEL_IP,
         video_port=Config.VIDEO_STREAM_PORT,
         result_port=Config.RESULT_RECEIVING_PORT,
-        legacy=Config.LEGACY,
-        ui=False):
+        legacy=Config.LEGACY):
     logger.debug(
         "Connecting to Server ({}) Port ({}, {})".format(ip, video_port,
                                                          result_port))
@@ -233,19 +226,27 @@ def run(sig_feed_available=None,
                 (resp_header, resp_data) = resp.data
                 resp_header = json.loads(resp_header)
                 logger.debug('header: {}'.format(resp_header))
-                if not ui:
-                    # this is a command line program
-                    result = parse(resp_data).get('speech')
-                    if result and len(result) > 0:
-                        logger.info('instruction: {}'.format(result))
-                else:
-                    # TODO: display received image on the pyqt ui
-                    # show_on_ui(sig_instruction_available, resp_data)
-                    result = parse(resp_data).get('speech')
-                    if result and len(result) > 0:
-                        logger.info('instruction: {}'.format(result))
-                        if sig_instruction_available:
-                            sig_instruction_available.emit(result)
+                resp_dict = parse(resp_data)
+
+                instruction = resp_dict.get('speech', False)
+                if instruction and len(instruction) > 0:
+                    logger.info('instruction: {}'.format(instruction))
+                    if sig_instruction_available:
+                        sig_instruction_available.emit(instruction)
+
+                guidance = False
+                animation_frames = resp_dict.get('animation', [])
+                if len(animation_frames) > 0 and \
+                        len(animation_frames[-1]) > 0:
+                    guidance = b64decode(animation_frames[-1][0])
+
+                if sig_guidance_available and guidance and \
+                        len(guidance) > 0:
+                    np_data = np.fromstring(guidance, dtype=np.uint8)
+                    frame = cv2.imdecode(np_data, cv2.CV_LOAD_IMAGE_COLOR)
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    sig_guidance_available.emit(rgb_frame)
+
             elif resp.type == ClientReply.ERROR:
                 logger.error("Error: {}".format(resp.data))
                 join_threads()

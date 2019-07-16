@@ -4,6 +4,7 @@ from __future__ import absolute_import, division, print_function
 import logging
 import sys  # We need sys so that we can pass argv to QApplication
 import threading
+import time
 
 import fire
 import logzero
@@ -42,12 +43,20 @@ class ClientThread(QThread):
     sig_instruction_available = pyqtSignal(str)
     sig_guidance_available = pyqtSignal(object)
 
-    def __init__(self, ip):
+    def __init__(self, ip, countdown_from=10):
         super(self.__class__, self).__init__()
         self._stop = threading.Event()
         self.ip = ip
+        self.countdown_from = countdown_from
 
     def run(self):
+        # countdown before starting the experiment
+        for i in range(self.countdown_from, 0, -1):
+            ti = time.time()
+            self.sig_instruction_available.emit('{}'.format(i))
+            time.sleep(max(1.0 - (time.time() - ti), 0))
+
+        self.sig_instruction_available.emit('')
         client.run(sig_feed_available=self.sig_feed_available,
                    sig_instruction_available=self.sig_instruction_available,
                    sig_guidance_available=self.sig_guidance_available,

@@ -9,6 +9,7 @@ import logging
 import select
 import struct
 import threading
+import time
 from base64 import b64decode
 from time import sleep
 
@@ -32,14 +33,68 @@ class GabrielSocketCommand(ClientCommand):
         super(GabrielSocketCommand, self).__init__()
 
 
+class VideoCaptureThread(threading.Thread):
+    """
+    Thread tasked with capturing video from the camera at a fixed rate.
+    """
+
+    def __init__(self,
+                 input_source,
+                 fps=24,
+                 sig_feed_available=None):
+        super(VideoCaptureThread, self).__init__()
+        self.input_source = input_source
+        self.sig_feed = sig_feed_available
+        self.alive = threading.Event()
+        self.alive.set()
+        self.frame_buf = Queue.Queue(maxsize=1)  # holds latest frame
+        self.interval = 1.0 / float(fps)
+        self.daemon = True
+
+    def run(self):
+        video_capture = cv2.VideoCapture(self.input_source)
+        while self.alive.isSet():
+            ti = time.time()
+            ret, frame = video_capture.read()
+
+            if ret:
+                if self.sig_feed:
+                    self.sig_feed.emit(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+                self._put_frame((ret, frame))
+                time.sleep(max(self.interval - (time.time() - ti), 0))
+            else:
+                logger.debug(
+                    'No more video frames from {}'.format(self.input_source))
+
+                self._put_frame((ret, None))
+                break
+
+        video_capture.release()
+
+    def _put_frame(self, frame):
+        while True:
+            try:
+                self.frame_buf.put(frame, block=False)
+                return
+            except Queue.Full:
+                self.frame_buf.get()
+
+    def get_frame(self):
+        return self.frame_buf.get(block=True)
+
+    def join(self, timeout=None):
+        self.alive.clear()
+        threading.Thread.join(self, timeout)
+
+
 class VideoStreamingThread(SocketClientThread):
-    def __init__(self, input_source, sig_feed_available=None,
+    def __init__(self, video_capture,
                  cmd_q=None, reply_q=None):
         super(VideoStreamingThread, self).__init__(cmd_q, reply_q)
         self.handlers[GabrielSocketCommand.STREAM] = self._handle_STREAM
         self.is_streaming = False
-        self._input_source = input_source
-        self.sig_feed = sig_feed_available
+        self.video_capture = video_capture
 
     def run(self):
         while self.alive.isSet():
@@ -53,14 +108,12 @@ class VideoStreamingThread(SocketClientThread):
     def _handle_STREAM(self, cmd):
         tokenm = cmd.data
         self.is_streaming = True
-        video_capture = cv2.VideoCapture(self._input_source)
         id = 0
         while self.alive.isSet() and self.is_streaming:
             # will be put into sleep if token is not available
             tokenm.getToken()
-            ret, frame = video_capture.read()
+            ret, frame = self.video_capture.get_frame()
             if not ret:
-                logger.debug('No more frame from {}'.format(self._input_source))
                 break
             ret, jpeg_frame = cv2.imencode('.jpg', frame)
             header = {protocol.Protocol_client.JSON_KEY_FRAME_ID: str(id)}
@@ -70,12 +123,6 @@ class VideoStreamingThread(SocketClientThread):
                 ClientCommand.SEND, jpeg_frame.tostring()))
             logger.debug('Send Frame {}'.format(id))
             id += 1
-
-            if self.sig_feed:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self.sig_feed.emit(rgb_frame)
-
-        video_capture.release()
 
 
 class ResultReceivingThread(SocketClientThread):
@@ -164,13 +211,14 @@ def parse(data):
         return data
 
 
-def create_streaming_thread(video_input, sig_feed_available):
+def create_video_threads(video_input, sig_feed_available):
     stream_cmd_q = Queue.Queue()
-    video_streaming_thread = VideoStreamingThread(video_input,
-                                                  sig_feed_available=sig_feed_available,
+    video_capture_thread = VideoCaptureThread(video_input,
+                                              sig_feed_available=sig_feed_available)
+    video_streaming_thread = VideoStreamingThread(video_capture_thread,
                                                   cmd_q=stream_cmd_q)
     video_streaming_thread.daemon = True
-    return video_streaming_thread, stream_cmd_q
+    return video_capture_thread, video_streaming_thread, stream_cmd_q
 
 
 def create_receiving_thread(legacy):
@@ -194,8 +242,10 @@ def run(sig_feed_available=None,
         "Connecting to Server ({}) Port ({}, {})".format(ip, video_port,
                                                          result_port))
     tokenm = TokenManager(Config.TOKEN)
-    video_streaming_thread, stream_cmd_q = create_streaming_thread(video_input,
-                                                                   sig_feed_available)
+
+    video_capture_thread, \
+    video_streaming_thread, \
+    stream_cmd_q = create_video_threads(video_input, sig_feed_available)
     # connect and stream to server
     stream_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
                                    (ip, video_port)))
@@ -207,6 +257,9 @@ def run(sig_feed_available=None,
     result_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
                                    (ip, result_port)))
     result_cmd_q.put(ClientCommand(GabrielSocketCommand.LISTEN, tokenm))
+
+    video_capture_thread.start()
+
     result_receiving_thread.start()
     sleep(0.1)
     video_streaming_thread.start()
@@ -214,6 +267,7 @@ def run(sig_feed_available=None,
     def join_threads():
         video_streaming_thread.join()
         result_receiving_thread.join()
+        video_capture_thread.join()
         with tokenm.has_token_cv:
             tokenm.has_token_cv.notifyAll()
 

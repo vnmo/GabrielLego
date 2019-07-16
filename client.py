@@ -30,7 +30,7 @@ class GabrielSocketCommand(ClientCommand):
     ACTIONS.append(LISTEN)
 
     def __init__(self, type, data=None):
-        super(GabrielSocketCommand, self).__init__()
+        super(GabrielSocketCommand, self).__init__(type, data=data)
 
 
 class VideoCaptureThread(threading.Thread):

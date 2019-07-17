@@ -77,6 +77,4 @@ services:
                 entrypoint:
                     - /bin/bash
                     - -c
-                    - |
-                        sleep 20;
-                        gabriel_client_ui --ip 172.18.0.2
+                    - gabriel_client_ui --ip 172.18.0.2

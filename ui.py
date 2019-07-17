@@ -9,7 +9,7 @@ import time
 import fire
 import logzero
 from PyQt4 import QtGui
-from PyQt4.QtCore import QString, QThread, pyqtSignal
+from PyQt4.QtCore import QString, QThread, pyqtSignal, Qt
 from PyQt4.QtGui import QImage, QPixmap
 
 import client
@@ -17,9 +17,22 @@ import design  # This file holds our MainWindow and all design related things
 
 
 class UI(QtGui.QMainWindow, design.Ui_MainWindow):
+    start_signal = pyqtSignal()
+
     def __init__(self):
         super(self.__class__, self).__init__()
         self.setupUi(self)  # This is defined in design.py file automatically
+        self.started = False
+        self.set_guidance_text('Press Enter to begin.')
+
+    def keyPressEvent(self, event):
+        super(self.__class__, self).keyPressEvent(event)
+        if not self.started and (
+                event.key() == Qt.Key_Enter or
+                event.key() == Qt.Key_Return
+        ):
+            self.started = True
+            self.start_signal.emit()
 
     @staticmethod
     def set_label_image(frame, label):
@@ -76,8 +89,10 @@ def main(ip, *args, **kwargs):
     clientThread.sig_guidance_available.connect(ui.set_guidance_image)
     clientThread.sig_instruction_available.connect(ui.set_guidance_text)
     clientThread.finished.connect(app.exit)
-    clientThread.start()
 
+    ui.start_signal.connect(clientThread.start)
+
+    # clientThread.start()
     sys.exit(app.exec_())  # and execute the app
 
 

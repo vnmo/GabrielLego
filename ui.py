@@ -5,14 +5,18 @@ import logging
 import sys  # We need sys so that we can pass argv to QApplication
 import threading
 import time
+from base64 import b64decode
 
+import cv2
 import fire
 import logzero
+import numpy as np
+from logzero import logger
 from PyQt4 import QtGui
 from PyQt4.QtCore import QString, QThread, pyqtSignal, Qt
 from PyQt4.QtGui import QImage, QPixmap
 
-import client
+from client import Client
 import design  # This file holds our MainWindow and all design related things
 
 
@@ -23,7 +27,7 @@ class UI(QtGui.QMainWindow, design.Ui_MainWindow):
         super(self.__class__, self).__init__()
         self.setupUi(self)  # This is defined in design.py file automatically
         self.started = False
-        self.set_guidance_text('Press Enter to begin.')
+        self.set_guidance(None, 'Press Enter to begin.')
 
     def keyPressEvent(self, event):
         super(self.__class__, self).keyPressEvent(event)
@@ -41,42 +45,60 @@ class UI(QtGui.QMainWindow, design.Ui_MainWindow):
         pix = QPixmap.fromImage(img)
         label.setPixmap(pix)
 
-    def set_feed_image(self, frame):
+    def update_video_feed(self, frame):
         UI.set_label_image(frame, self.feed_label)
 
-    def set_guidance_image(self, frame):
-        UI.set_label_image(frame, self.guidance_label)
-
-    def set_guidance_text(self, instruction):
+    def set_guidance(self, image, instruction):
+        if image is not None:
+            UI.set_label_image(image, self.guidance_label)
         self.instruction_label.setText(QString(instruction))
 
 
-class ClientThread(QThread):
-    sig_feed_available = pyqtSignal(object)
-    sig_instruction_available = pyqtSignal(str)
-    sig_guidance_available = pyqtSignal(object)
+class ClientThread(QThread, Client):
+    sig_video_feed = pyqtSignal(object)
+    sig_guidance_feed = pyqtSignal(object, str)
 
-    def __init__(self, ip, countdown_from=10):
-        super(self.__class__, self).__init__()
+    def __init__(self, ip, ui, countdown_from=5):
+        QThread.__init__(self)
+        Client.__init__(self, ip=ip)
+
+        # connect signals
+        self.sig_video_feed.connect(ui.update_video_feed)
+        self.sig_guidance_feed.connect(ui.set_guidance)
+        ui.start_signal.connect(self.start)
+
         self._stop = threading.Event()
-        self.ip = ip
         self.countdown_from = countdown_from
+
+    def video_frame_callback(self, frame):
+        self.sig_video_feed.emit(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+    def response_callback(self, resp_dict):
+        instruction = resp_dict.get('speech', '')
+        guidance = resp_dict.get('animation', [])
+
+        if len(instruction) > 0 and len(guidance) > 0:
+            logger.info('instruction: {}'.format(instruction))
+
+            if len(guidance[-1]) > 0:
+                guidance = b64decode(guidance[-1][0])
+                np_data = np.fromstring(guidance, dtype=np.uint8)
+                frame = cv2.imdecode(np_data, cv2.CV_LOAD_IMAGE_COLOR)
+                guidance = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                self.sig_guidance_feed.emit(guidance, instruction)
 
     def run(self):
         # countdown before starting the experiment
         for i in range(self.countdown_from, 0, -1):
             ti = time.time()
-            self.sig_instruction_available.emit('{}'.format(i))
+            self.sig_guidance_feed.emit(None, '{}'.format(i))
             time.sleep(max(1.0 - (time.time() - ti), 0))
 
-        self.sig_instruction_available.emit('')
-        client.run(sig_feed_available=self.sig_feed_available,
-                   sig_instruction_available=self.sig_instruction_available,
-                   sig_guidance_available=self.sig_guidance_available,
-                   ip=self.ip)
+        self.sig_guidance_feed.emit(None, '')
+        super(ClientThread, self).connect_and_run()
 
     def stop(self):
-        client.alive = False
         self._stop.set()
 
 
@@ -84,13 +106,8 @@ def main(ip, *args, **kwargs):
     app = QtGui.QApplication(sys.argv)
     ui = UI()
     ui.show()
-    clientThread = ClientThread(ip)
-    clientThread.sig_feed_available.connect(ui.set_feed_image)
-    clientThread.sig_guidance_available.connect(ui.set_guidance_image)
-    clientThread.sig_instruction_available.connect(ui.set_guidance_text)
+    clientThread = ClientThread(ip, ui)
     clientThread.finished.connect(app.exit)
-
-    ui.start_signal.connect(clientThread.start)
 
     # clientThread.start()
     sys.exit(app.exec_())  # and execute the app

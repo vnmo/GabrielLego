@@ -10,12 +10,10 @@ import select
 import struct
 import threading
 import time
-from base64 import b64decode
 from time import sleep
 
 import fire
 import logzero
-import numpy as np
 from logzero import logger
 
 import protocol
@@ -41,10 +39,10 @@ class VideoCaptureThread(threading.Thread):
     def __init__(self,
                  input_source,
                  fps=24,
-                 sig_feed_available=None):
+                 video_frame_callback=None):
         super(VideoCaptureThread, self).__init__()
         self.input_source = input_source
-        self.sig_feed = sig_feed_available
+        self.video_frame_callback = video_frame_callback
         self.alive = threading.Event()
         self.alive.set()
         self.frame_buf = Queue.Queue(maxsize=1)  # holds latest frame
@@ -58,8 +56,9 @@ class VideoCaptureThread(threading.Thread):
             ret, frame = video_capture.read()
 
             if ret:
-                if self.sig_feed:
-                    self.sig_feed.emit(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                if self.video_frame_callback:
+                    self.video_frame_callback(frame)
+                    # self.sig_feed.emit(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
                 self._put_frame((ret, frame))
                 time.sleep(max(self.interval - (time.time() - ti), 0))
@@ -204,111 +203,105 @@ class TokenManager(object):
                 self.has_token_cv.notifyAll()
 
 
-def parse(data):
-    if Config.LEGACY:
-        return json.loads(data)
-    else:
-        return data
+class Client(object):
+    def __init__(self,
+                 ip=Config.GABRIEL_IP,
+                 video_input=0,
+                 legacy=Config.LEGACY,
+                 video_port=Config.VIDEO_STREAM_PORT,
+                 result_port=Config.RESULT_RECEIVING_PORT,
+                 num_tokens=Config.TOKEN
+                 ):
+        super(self.__class__, self).__init__()
+        self.ip = ip
+        self.video_input = video_input
+        self.legacy = legacy
+        self.video_port = video_port
+        self.result_port = result_port
+        self.token_mgr = TokenManager(num_tokens)
 
+    def video_frame_callback(self, frame):
+        # no-op by default
+        logger.info('Superclass...')
+        pass
 
-def create_video_threads(video_input, sig_feed_available):
-    stream_cmd_q = Queue.Queue()
-    video_capture_thread = VideoCaptureThread(video_input,
-                                              sig_feed_available=sig_feed_available)
-    video_streaming_thread = VideoStreamingThread(video_capture_thread,
-                                                  cmd_q=stream_cmd_q)
-    video_streaming_thread.daemon = True
-    return video_capture_thread, video_streaming_thread, stream_cmd_q
+    def response_callback(self, resp_dict):
+        instruction = resp_dict.get('speech', False)
+        if instruction and len(instruction > 0):
+            logger.info('instruction: {}'.format(instruction))
 
+    @staticmethod
+    def parse(data):
+        if Config.LEGACY:
+            return json.loads(data)
+        else:
+            return data
 
-def create_receiving_thread(legacy):
-    result_cmd_q = Queue.Queue()
-    result_reply_q = Queue.Queue()
-    result_receiving_thread = ResultReceivingThread(
-        cmd_q=result_cmd_q, reply_q=result_reply_q, legacy=legacy)
-    result_receiving_thread.daemon = True
-    return result_receiving_thread, result_cmd_q, result_reply_q
+    def connect_and_run(self):
+        logger.debug(
+            "Connecting to Server ({}) Port ({}, {})".format(self.ip,
+                                                             self.video_port,
+                                                             self.result_port))
 
+        # create the video threads
+        stream_cmd_q = Queue.Queue()
+        video_capture_thread = VideoCaptureThread(
+            self.video_input,
+            video_frame_callback=self.video_frame_callback
+        )
+        video_streaming_thread = VideoStreamingThread(video_capture_thread,
+                                                      cmd_q=stream_cmd_q)
+        video_streaming_thread.daemon = True
 
-def run(sig_feed_available=None,
-        sig_instruction_available=None,
-        sig_guidance_available=None,
-        video_input=0,
-        ip=Config.GABRIEL_IP,
-        video_port=Config.VIDEO_STREAM_PORT,
-        result_port=Config.RESULT_RECEIVING_PORT,
-        legacy=Config.LEGACY):
-    logger.debug(
-        "Connecting to Server ({}) Port ({}, {})".format(ip, video_port,
-                                                         result_port))
-    tokenm = TokenManager(Config.TOKEN)
+        # connect and stream to server
+        stream_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
+                                       (self.ip, self.video_port)))
+        stream_cmd_q.put(ClientCommand(GabrielSocketCommand.STREAM,
+                                       self.token_mgr))
 
-    video_capture_thread, \
-    video_streaming_thread, \
-    stream_cmd_q = create_video_threads(video_input, sig_feed_available)
-    # connect and stream to server
-    stream_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
-                                   (ip, video_port)))
-    stream_cmd_q.put(ClientCommand(GabrielSocketCommand.STREAM, tokenm))
-    # connect and listen to server
-    result_receiving_thread, result_cmd_q, result_reply_q = \
-        create_receiving_thread(
-            legacy=legacy)
-    result_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
-                                   (ip, result_port)))
-    result_cmd_q.put(ClientCommand(GabrielSocketCommand.LISTEN, tokenm))
+        # create listening threads
+        result_cmd_q = Queue.Queue()
+        result_reply_q = Queue.Queue()
+        result_receiving_thread = ResultReceivingThread(
+            cmd_q=result_cmd_q, reply_q=result_reply_q, legacy=self.legacy)
+        result_receiving_thread.daemon = True
 
-    video_capture_thread.start()
+        result_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
+                                       (self.ip, self.result_port)))
+        result_cmd_q.put(ClientCommand(GabrielSocketCommand.LISTEN,
+                                       self.token_mgr))
 
-    result_receiving_thread.start()
-    sleep(0.1)
-    video_streaming_thread.start()
+        video_capture_thread.start()
+        result_receiving_thread.start()
+        sleep(0.1)
+        video_streaming_thread.start()
 
-    def join_threads():
-        video_streaming_thread.join()
-        result_receiving_thread.join()
-        video_capture_thread.join()
-        with tokenm.has_token_cv:
-            tokenm.has_token_cv.notifyAll()
+        def join_threads():
+            video_streaming_thread.join()
+            result_receiving_thread.join()
+            video_capture_thread.join()
+            with self.token_mgr.has_token_cv:
+                self.token_mgr.has_token_cv.notifyAll()
 
-    try:
-        while True:
-            resp = result_reply_q.get()
-            # connect and send also send reply to reply queue without any
-            # data attached
-            if resp.type == ClientReply.SUCCESS and resp.data is not None:
-                (resp_header, resp_data) = resp.data
-                resp_header = json.loads(resp_header)
-                logger.debug('header: {}'.format(resp_header))
-                resp_dict = parse(resp_data)
+        try:
+            while True:
+                resp = result_reply_q.get()
+                # connect and send also send reply to reply queue without any
+                # data attached
+                if resp.type == ClientReply.SUCCESS and resp.data is not None:
+                    (resp_header, resp_data) = resp.data
+                    resp_header = json.loads(resp_header)
+                    logger.debug('header: {}'.format(resp_header))
+                    self.response_callback(Client.parse(resp_data))
 
-                instruction = resp_dict.get('speech', False)
-                if instruction and len(instruction) > 0:
-                    logger.info('instruction: {}'.format(instruction))
-                    if sig_instruction_available:
-                        sig_instruction_available.emit(instruction)
-
-                guidance = False
-                animation_frames = resp_dict.get('animation', [])
-                if len(animation_frames) > 0 and \
-                        len(animation_frames[-1]) > 0:
-                    guidance = b64decode(animation_frames[-1][0])
-
-                if sig_guidance_available and guidance and \
-                        len(guidance) > 0:
-                    np_data = np.fromstring(guidance, dtype=np.uint8)
-                    frame = cv2.imdecode(np_data, cv2.CV_LOAD_IMAGE_COLOR)
-                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    sig_guidance_available.emit(rgb_frame)
-
-            elif resp.type == ClientReply.ERROR:
-                logger.error("Error: {}".format(resp.data))
-                join_threads()
-                break
-    except KeyboardInterrupt:
-        join_threads()
+                elif resp.type == ClientReply.ERROR:
+                    logger.error("Error: {}".format(resp.data))
+                    join_threads()
+                    break
+        except KeyboardInterrupt:
+            join_threads()
 
 
 if __name__ == '__main__':
     logzero.loglevel(logging.INFO)
-    fire.Fire(run)
+    fire.Fire(Client, 'connect_and_run')

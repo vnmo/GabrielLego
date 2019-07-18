@@ -2,8 +2,8 @@
 
 This repository contains a Python 2.7 implementation of a client for the Gabriel LEGO task guidance wearable cognitive assistance application [\[1\]](#references).
 
-## Dependencies
-### Deployment through Docker
+## Deployment
+### Through Docker
 
 The easiest way of running the client is through Docker, using the provided Docker-Compose configuration file.
 

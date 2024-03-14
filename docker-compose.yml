@@ -52,29 +52,3 @@ services:
             - |
                 sleep 15;
                 python proxy.py -s gabriel_control:8021
-    gabriel_lego_client:
-                build:
-                    context: .
-                    dockerfile: ./Dockerfile
-                image: molguin/gabriel-lego-client:latest
-                container_name: gabriel_lego_client
-#                networks:
-#                    - default
-                volumes:
-                    - /tmp/.X11-unix:/tmp/.X11-unix:rw
-                environment:
-                    - DISPLAY
-                    - QT_X11_NO_MITSHM=1
-                links:
-                    - gabriel_control
-                    - gabriel_ucomm
-                    - gabriel_lego
-                depends_on:
-                  - gabriel_control
-                  - gabriel_ucomm
-                  - gabriel_lego
-                privileged: true
-                entrypoint:
-                    - /bin/bash
-                    - -c
-                    - gabriel_client_ui --ip gabriel_control
